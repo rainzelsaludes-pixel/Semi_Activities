@@ -1,0 +1,266 @@
+"""
+Activity 4: 3D Projection Engine
+Implements: Orthographic, Cavalier Oblique, Cabinet Oblique, One-Point Perspective
+Features: Real-time 3D rotation, wireframe cube rendering, mode switching.
+Controls: 1=Ortho, 2=Cavalier, 3=Cabinet, 4=Perspective
+          Arrows=Rotate, R=Reset, ESC=Quit
+"""
+
+import pygame
+import math
+import sys
+
+pygame.init()
+SCREEN_WIDTH, SCREEN_HEIGHT = 800, 600
+screen = pygame.display.set_mode((SCREEN_WIDTH, SCREEN_HEIGHT))
+pygame.display.set_caption('Activity 4: 3D Projection Engine')
+clock = pygame.time.Clock()
+font = pygame.font.Font(None, 28)
+small_font = pygame.font.Font(None, 20)
+
+# ============================================================
+# 3D CUBE DEFINITION
+# ============================================================
+
+# 8 vertices centered at origin
+cube_vertices = [
+    (-100, -100, -100),  # 0
+    ( 100, -100, -100),  # 1
+    ( 100,  100, -100),  # 2
+    (-100,  100, -100),  # 3
+    (-100, -100,  100),  # 4
+    ( 100, -100,  100),  # 5
+    ( 100,  100,  100),  # 6
+    (-100,  100,  100),  # 7
+]
+
+# 12 edges
+cube_edges = [
+    (0, 1), (1, 2), (2, 3), (3, 0),  # back face
+    (4, 5), (5, 6), (6, 7), (7, 4),  # front face
+    (0, 4), (1, 5), (2, 6), (3, 7),  # connecting edges
+]
+
+# Face colors for depth cue
+face_colors = [
+    (220, 60, 60), (60, 220, 60), (60, 60, 220),
+    (220, 220, 60), (220, 60, 220), (60, 220, 220)
+]
+
+# ============================================================
+# ROTATION MATRICES (Task 4.2)
+# ============================================================
+
+def rotate_x(p, angle):
+    """Rotate point around X axis."""
+    x, y, z = p
+    cos_a, sin_a = math.cos(angle), math.sin(angle)
+    return (x, y * cos_a - z * sin_a, y * sin_a + z * cos_a)
+
+def rotate_y(p, angle):
+    """Rotate point around Y axis."""
+    x, y, z = p
+    cos_a, sin_a = math.cos(angle), math.sin(angle)
+    return (x * cos_a + z * sin_a, y, -x * sin_a + z * cos_a)
+
+def rotate_z(p, angle):
+    """Rotate point around Z axis."""
+    x, y, z = p
+    cos_a, sin_a = math.cos(angle), math.sin(angle)
+    return (x * cos_a - y * sin_a, x * sin_a + y * cos_a, z)
+
+def rotate_xyz(p, ax, ay, az):
+    """Apply X then Y then Z rotation."""
+    p = rotate_x(p, ax)
+    p = rotate_y(p, ay)
+    p = rotate_z(p, az)
+    return p
+
+# ============================================================
+# PROJECTION FUNCTIONS (Tasks 4.1, 4.3)
+# ============================================================
+
+def project_orthographic(x, y, z):
+    """Orthographic: drop z-coordinate."""
+    return int(x + SCREEN_WIDTH // 2), int(y + SCREEN_HEIGHT // 2)
+
+def project_oblique(x, y, z, mode='cavalier', phi_deg=30):
+    """
+    Oblique parallel projection.
+    Cavalier: L1 = 1.0 (full depth, 45 deg DOP)
+    Cabinet:  L1 = 0.5 (half depth, 63.4 deg DOP)
+    phi is the angle of the receding axis from horizontal.
+    """
+    phi = math.radians(phi_deg)
+    L1 = 1.0 if mode == 'cavalier' else 0.5
+    xp = x + z * L1 * math.cos(phi)
+    yp = y + z * L1 * math.sin(phi)
+    return int(xp + SCREEN_WIDTH // 2), int(yp + SCREEN_HEIGHT // 2)
+
+def project_perspective(x, y, z, D=500):
+    """One-point perspective with Center of Projection at distance D."""
+    distance = z + D
+    if distance <= 0.001:
+        distance = 0.001
+    xp = (x * D) / distance
+    yp = (y * D) / distance
+    return int(xp + SCREEN_WIDTH // 2), int(yp + SCREEN_HEIGHT // 2)
+
+# ============================================================
+# PROJECTION ENGINE
+# ============================================================
+
+class ProjectionEngine:
+    def __init__(self):
+        self.mode = 1  # 1=Ortho, 2=Cavalier, 3=Cabinet, 4=Perspective
+        self.angle_x = 0.3
+        self.angle_y = 0.5
+        self.angle_z = 0.0
+        self.auto_rotate = True
+        self.phi_deg = 30  # receding axis angle
+        self.mode_names = {
+            1: "ORTHOGRAPHIC",
+            2: "CAVALIER OBLIQUE (L1=1.0)",
+            3: "CABINET OBLIQUE (L1=0.5)",
+            4: "ONE-POINT PERSPECTIVE",
+        }
+
+    def project(self, p):
+        """Project a 3D point to 2D screen coordinates."""
+        x, y, z = p
+        if self.mode == 1:
+            return project_orthographic(x, y, z)
+        elif self.mode == 2:
+            return project_oblique(x, y, z, 'cavalier', self.phi_deg)
+        elif self.mode == 3:
+            return project_oblique(x, y, z, 'cabinet', self.phi_deg)
+        else:
+            return project_perspective(x, y, z, D=500)
+
+    def update(self, dt):
+        if self.auto_rotate:
+            self.angle_y += dt * 0.8
+            self.angle_x += dt * 0.4
+
+    def handle_keys(self, keys):
+        rot_speed = 1.5 * (1 / 60)
+        if keys[pygame.K_LEFT]:
+            self.angle_y -= rot_speed
+            self.auto_rotate = False
+        if keys[pygame.K_RIGHT]:
+            self.angle_y += rot_speed
+            self.auto_rotate = False
+        if keys[pygame.K_UP]:
+            self.angle_x -= rot_speed
+            self.auto_rotate = False
+        if keys[pygame.K_DOWN]:
+            self.angle_x += rot_speed
+            self.auto_rotate = False
+
+    def get_transformed_vertices(self):
+        """Rotate all cube vertices."""
+        return [rotate_xyz(v, self.angle_x, self.angle_y, self.angle_z)
+                for v in cube_vertices]
+
+    def draw(self, surface):
+        surface.fill((15, 17, 25))
+
+        # Project all vertices
+        transformed = self.get_transformed_vertices()
+        projected = [self.project(v) for v in transformed]
+
+        # Draw axes
+        axes = [
+            ((200, 0, 0), (255, 80, 80), "X"),
+            ((0, 200, 0), (80, 255, 80), "Y"),
+            ((0, 0, 200), (80, 80, 255), "Z"),
+        ]
+        origin_2d = self.project((0, 0, 0))
+        for axis, color, label in axes:
+            end_3d = rotate_xyz(axis, self.angle_x, self.angle_y, self.angle_z)
+            end_2d = self.project(end_3d)
+            pygame.draw.line(surface, color, origin_2d, end_2d, 2)
+            txt = small_font.render(label, True, color)
+            surface.blit(txt, (end_2d[0] + 5, end_2d[1] - 5))
+
+        # Draw cube edges (wireframe - Task 4.1)
+        for i, (a, b) in enumerate(cube_edges):
+            color = (100, 180, 255) if i < 4 else (180, 220, 255)
+            pygame.draw.line(surface, color, projected[a], projected[b], 2)
+
+        # Draw vertices
+        for i, p in enumerate(projected):
+            pygame.draw.circle(surface, (255, 255, 0), p, 5)
+            pygame.draw.circle(surface, (255, 255, 255), p, 5, 1)
+
+        # Perspective: draw vanishing point marker (Task 4.4)
+        if self.mode == 4:
+            vp_x, vp_y = SCREEN_WIDTH // 2, SCREEN_HEIGHT // 2
+            pygame.draw.circle(surface, (255, 100, 100), (vp_x, vp_y), 6, 2)
+            vp_label = small_font.render("Vanishing Point", True, (255, 100, 100))
+            surface.blit(vp_label, (vp_x + 10, vp_y - 10))
+            # Draw converging lines from front face corners to VP
+            for i in range(4, 8):  # front face vertices
+                pygame.draw.line(surface, (255, 100, 100, 80),
+                               projected[i], (vp_x, vp_y), 1)
+
+        # HUD
+        title = font.render(f"Activity 4: {self.mode_names[self.mode]}", True, (255, 255, 255))
+        surface.blit(title, (10, 10))
+        controls = small_font.render(
+            "1=Ortho  2=Cavalier  3=Cabinet  4=Perspective  "
+            "Arrows=Rotate  Space=Auto  R=Reset  ESC=Quit",
+            True, (180, 180, 180))
+        surface.blit(controls, (10, 40))
+        fps_txt = small_font.render(f"FPS: {int(clock.get_fps())}", True, (150, 255, 150))
+        surface.blit(fps_txt, (SCREEN_WIDTH - 100, 10))
+
+        # Info
+        info = small_font.render(
+            f"Rot X: {math.degrees(self.angle_x):.1f}  "
+            f"Rot Y: {math.degrees(self.angle_y):.1f}  "
+            f"Auto: {self.auto_rotate}",
+            True, (255, 255, 100))
+        surface.blit(info, (10, 65))
+
+
+def main():
+    engine = ProjectionEngine()
+    running = True
+    while running:
+        dt = clock.tick(60) / 1000.0
+        keys = pygame.key.get_pressed()
+
+        for event in pygame.event.get():
+            if event.type == pygame.QUIT:
+                running = False
+            if event.type == pygame.KEYDOWN:
+                if event.key == pygame.K_ESCAPE:
+                    running = False
+                elif event.key == pygame.K_1:
+                    engine.mode = 1
+                elif event.key == pygame.K_2:
+                    engine.mode = 2
+                elif event.key == pygame.K_3:
+                    engine.mode = 3
+                elif event.key == pygame.K_4:
+                    engine.mode = 4
+                elif event.key == pygame.K_SPACE:
+                    engine.auto_rotate = not engine.auto_rotate
+                elif event.key == pygame.K_r:
+                    engine.angle_x = 0.3
+                    engine.angle_y = 0.5
+                    engine.angle_z = 0.0
+                    engine.auto_rotate = True
+
+        engine.handle_keys(keys)
+        engine.update(dt)
+        engine.draw(screen)
+        pygame.display.flip()
+
+    pygame.quit()
+    sys.exit()
+
+
+if __name__ == "__main__":
+    main()
