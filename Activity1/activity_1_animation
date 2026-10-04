@@ -1,0 +1,392 @@
+
+---
+
+## Activity 1: 2D Animation Principles & Kinematics Engine
+
+**File: `activity_1_2d_animation/activity1_animation.py`**
+
+```python
+"""
+Activity 1: 2D Animation Principles & Kinematics Engine
+Implements: Tweening (LERP + Ease), Polygon Morphing, Bouncing Ball Dynamics
+Controls: 1=Tweening, 2=Morphing, 3=Dynamics, ESC=Quit
+"""
+
+import pygame
+import math
+import sys
+
+pygame.init()
+SCREEN_WIDTH, SCREEN_HEIGHT = 800, 600
+screen = pygame.display.set_mode((SCREEN_WIDTH, SCREEN_HEIGHT))
+pygame.display.set_caption('Activity 1: 2D Animation, Tweening & Morphing Engine')
+clock = pygame.time.Clock()
+font = pygame.font.Font(None, 28)
+small_font = pygame.font.Font(None, 20)
+
+# ============================================================
+# INTERPOLATION HELPERS
+# ============================================================
+
+def lerp(a, b, t):
+    """Linear interpolation between a and b."""
+    return a + (b - a) * t
+
+def lerp_point(p1, p2, t):
+    """LERP between two 2D points."""
+    return (lerp(p1[0], p2[0], t), lerp(p1[1], p2[1], t))
+
+def ease_in(t):
+    """Ease-in (quadratic)."""
+    return t * t
+
+def ease_out(t):
+    """Ease-out (quadratic)."""
+    return t * (2 - t)
+
+def ease_in_out(t):
+    """Smooth ease-in-out."""
+    if t < 0.5:
+        return 2 * t * t
+    return -1 + (4 - 2 * t) * t
+
+# ============================================================
+# TASK 1.1: TWEENING ALONG A MULTI-POINT SPLINE PATH
+# ============================================================
+
+class TweenPath:
+    """Sprite moving along a multi-point path with LERP and easing."""
+    def __init__(self):
+        self.waypoints = [
+            (100, 500), (200, 200), (350, 450),
+            (500, 150), (650, 400), (750, 250)
+        ]
+        self.t = 0.0
+        self.speed = 0.005
+        self.duration = 6.0  # seconds for full path
+        self.elapsed = 0.0
+        self.radius = 15
+        self.trail = []
+        self.easing_mode = 0  # 0=linear, 1=ease_in, 2=ease_out, 3=ease_in_out
+        self.easing_names = ["LINEAR", "EASE-IN", "EASE-OUT", "EASE-IN-OUT"]
+
+    def update(self, dt):
+        self.elapsed += dt
+        raw_t = min(self.elapsed / self.duration, 1.0)
+        
+        # Apply easing based on mode
+        if self.easing_mode == 0:
+            t = raw_t
+        elif self.easing_mode == 1:
+            t = ease_in(raw_t)
+        elif self.easing_mode == 2:
+            t = ease_out(raw_t)
+        else:
+            t = ease_in_out(raw_t)
+        
+        # Find segment
+        n = len(self.waypoints) - 1
+        seg = min(int(t * n), n - 1)
+        local_t = (t * n) - seg
+        
+        p1 = self.waypoints[seg]
+        p2 = self.waypoints[seg + 1]
+        pos = lerp_point(p1, p2, local_t)
+        
+        self.trail.append(pos)
+        if len(self.trail) > 60:
+            self.trail.pop(0)
+        
+        if raw_t >= 1.0:
+            self.elapsed = 0.0
+            self.trail.clear()
+        
+        return pos
+
+    def draw(self, surface):
+        # Draw path
+        for i in range(len(self.waypoints) - 1):
+            pygame.draw.line(surface, (60, 60, 80),
+                           self.waypoints[i], self.waypoints[i + 1], 1)
+        # Draw waypoints
+        for wp in self.waypoints:
+            pygame.draw.circle(surface, (100, 100, 120), wp, 4)
+        
+        # Draw trail
+        for i, p in enumerate(self.trail):
+            alpha = int(255 * (i / len(self.trail))) if self.trail else 0
+            color = (44, 94, 138)
+            r = max(1, int(self.radius * (i / len(self.trail))))
+            if r > 0:
+                pygame.draw.circle(surface, color, (int(p[0]), int(p[1])), r)
+
+    def get_position(self):
+        n = len(self.waypoints) - 1
+        raw_t = min(self.elapsed / self.duration, 1.0)
+        if self.easing_mode == 0:
+            t = raw_t
+        elif self.easing_mode == 1:
+            t = ease_in(raw_t)
+        elif self.easing_mode == 2:
+            t = ease_out(raw_t)
+        else:
+            t = ease_in_out(raw_t)
+        seg = min(int(t * n), n - 1)
+        local_t = (t * n) - seg
+        return lerp_point(self.waypoints[seg], self.waypoints[seg + 1], local_t)
+
+# ============================================================
+# TASK 1.2: POLYGON MORPHING (Triangle -> Quadrilateral)
+# ============================================================
+
+class PolygonMorph:
+    """
+    Morphs a triangle into a quadrilateral.
+    Vertex correspondence rule: split an edge on the simpler polygon
+    so both keyframes have identical vertex count.
+    Triangle (3 verts) gets a 4th vertex on one edge (duplicate),
+    making 4 control vertices for both.
+    """
+    def __init__(self):
+        # Start: Triangle with 4 control points (one edge split)
+        # Triangle vertices: A(200,100), B(400,400), C(150,400)
+        # Split edge B-C at midpoint M(275,400)
+        self.start = [
+            (200, 100),   # A - apex
+            (400, 400),   # B - right base
+            (275, 400),   # M - midpoint of B-C (split vertex)
+            (150, 400),   # C - left base
+        ]
+        # End: Quadrilateral (4 vertices)
+        self.end = [
+            (250, 80),    # top
+            (500, 200),   # right
+            (400, 450),   # bottom-right
+            (100, 350),   # bottom-left
+        ]
+        self.t = 0.0
+        self.direction = 1
+        self.speed = 0.008
+
+    def update(self):
+        self.t += self.speed * self.direction
+        if self.t >= 1.0:
+            self.t = 1.0
+            self.direction = -1
+        elif self.t <= 0.0:
+            self.t = 0.0
+            self.direction = 1
+
+    def get_vertices(self):
+        return [lerp_point(self.start[i], self.end[i], self.t)
+                for i in range(4)]
+
+    def draw(self, surface):
+        verts = self.get_vertices()
+        # Draw filled polygon with alpha
+        color = (
+            int(lerp(44, 200, self.t)),
+            int(lerp(94, 100, self.t)),
+            int(lerp(138, 50, self.t))
+        )
+        pygame.draw.polygon(surface, color, verts)
+        pygame.draw.polygon(surface, (255, 255, 255), verts, 2)
+        
+        # Draw vertices
+        for v in verts:
+            pygame.draw.circle(surface, (255, 255, 0), (int(v[0]), int(v[1])), 5)
+        
+        # Labels
+        labels = ["A", "B", "M", "C"]
+        for i, v in enumerate(verts):
+            txt = small_font.render(labels[i], True, (255, 255, 255))
+            surface.blit(txt, (v[0] + 8, v[1] - 8))
+
+# ============================================================
+# TASK 1.3: BOUNCING BALL DYNAMICS
+# ============================================================
+
+class BouncingBall:
+    """Physically-based bouncing ball with gravity and restitution."""
+    def __init__(self):
+        self.x = 600.0
+        self.y = 100.0
+        self.vx = -180.0
+        self.vy = 0.0
+        self.radius = 18
+        self.gravity = 800.0       # pixels/s^2
+        self.restitution = 0.78
+        self.floor_y = 520
+        self.wall_left = 0
+        self.wall_right = SCREEN_WIDTH
+        self.energy = 1.0
+        self.trail = []
+
+    def update(self, dt):
+        # Euler integration
+        self.vy += self.gravity * dt
+        self.x += self.vx * dt
+        self.y += self.vy * dt
+
+        # Floor collision
+        if self.y + self.radius >= self.floor_y:
+            self.y = self.floor_y - self.radius
+            if abs(self.vy) > 5:
+                self.vy = -self.restitution * self.vy
+                self.vx *= 0.98  # friction
+            else:
+                self.vy = 0
+                self.vx *= 0.95
+
+        # Wall collisions
+        if self.x - self.radius <= self.wall_left:
+            self.x = self.wall_left + self.radius
+            self.vx = -self.vx * self.restitution
+        elif self.x + self.radius >= self.wall_right:
+            self.x = self.wall_right - self.radius
+            self.vx = -self.vx * self.restitution
+
+        # Ceiling
+        if self.y - self.radius <= 0:
+            self.y = self.radius
+            self.vy = -self.vy * self.restitution
+
+        # Trail
+        self.trail.append((self.x, self.y))
+        if len(self.trail) > 40:
+            self.trail.pop(0)
+
+        # Reset if nearly stopped
+        if abs(self.vy) < 2 and self.y + self.radius >= self.floor_y - 1:
+            self.__init__()
+
+    def draw(self, surface):
+        # Floor
+        pygame.draw.line(surface, (80, 80, 80), (0, self.floor_y),
+                        (SCREEN_WIDTH, self.floor_y), 3)
+        
+        # Trail
+        for i, p in enumerate(self.trail):
+            alpha = i / len(self.trail) if self.trail else 0
+            r = max(1, int(self.radius * alpha * 0.6))
+            color = (int(44 * alpha + 20), int(94 * alpha + 20),
+                    int(138 * alpha + 30))
+            if r > 0:
+                pygame.draw.circle(surface, color, (int(p[0]), int(p[1])), r)
+        
+        # Ball with gradient
+        pygame.draw.circle(surface, (44, 94, 138),
+                          (int(self.x), int(self.y)), self.radius)
+        pygame.draw.circle(surface, (150, 200, 240),
+                          (int(self.x - 5), int(self.y - 5)), self.radius // 3)
+        pygame.draw.circle(surface, (255, 255, 255),
+                          (int(self.x), int(self.y)), self.radius, 2)
+
+# ============================================================
+# MAIN APPLICATION
+# ============================================================
+
+class AnimationApp:
+    def __init__(self):
+        self.mode = 1  # 1=tween, 2=morph, 3=dynamics
+        self.tween = TweenPath()
+        self.morph = PolygonMorph()
+        self.ball = BouncingBall()
+        self.fps = 60
+
+    def handle_events(self):
+        for event in pygame.event.get():
+            if event.type == pygame.QUIT:
+                return False
+            if event.type == pygame.KEYDOWN:
+                if event.key == pygame.K_ESCAPE:
+                    return False
+                elif event.key == pygame.K_1:
+                    self.mode = 1
+                elif event.key == pygame.K_2:
+                    self.mode = 2
+                elif event.key == pygame.K_3:
+                    self.mode = 3
+                elif event.key == pygame.K_e:
+                    self.tween.easing_mode = (self.tween.easing_mode + 1) % 4
+        return True
+
+    def update(self, dt):
+        if self.mode == 1:
+            self.tween.update(dt)
+        elif self.mode == 2:
+            self.morph.update()
+        else:
+            self.ball.update(dt)
+
+    def draw_hud(self, surface):
+        mode_names = {1: "TWEENING (LERP + Easing)",
+                      2: "MORPHING (Triangle -> Quad)",
+                      3: "DYNAMICS (Bouncing Ball)"}
+        
+        title = font.render(f"Activity 1: {mode_names[self.mode]}", True, (255, 255, 255))
+        surface.blit(title, (10, 10))
+        
+        controls = small_font.render(
+            "1=Tweening  2=Morphing  3=Dynamics  E=Cycle Easing  ESC=Quit",
+            True, (180, 180, 180))
+        surface.blit(controls, (10, 40))
+        
+        fps_txt = small_font.render(f"FPS: {int(clock.get_fps())}", True, (150, 255, 150))
+        surface.blit(fps_txt, (SCREEN_WIDTH - 120, 10))
+
+        if self.mode == 1:
+            info = small_font.render(
+                f"Easing: {self.tween.easing_names[self.tween.easing_mode]}  |  "
+                f"t = {min(self.tween.elapsed / self.tween.duration, 1.0):.2f}",
+                True, (255, 255, 100))
+            surface.blit(info, (10, 65))
+        elif self.mode == 2:
+            info = small_font.render(
+                f"Morph t = {self.morph.t:.2f}  |  Vertices: 4 (edge split)",
+                True, (255, 255, 100))
+            surface.blit(info, (10, 65))
+        else:
+            info = small_font.render(
+                f"vy = {self.ball.vy:.1f}  vx = {self.ball.vx:.1f}  "
+                f"e = {self.ball.restitution}",
+                True, (255, 255, 100))
+            surface.blit(info, (10, 65))
+
+    def draw(self, surface):
+        surface.fill((20, 22, 30))
+        
+        # Grid
+        for x in range(0, SCREEN_WIDTH, 50):
+            pygame.draw.line(surface, (30, 32, 40), (x, 0), (x, SCREEN_HEIGHT))
+        for y in range(0, SCREEN_HEIGHT, 50):
+            pygame.draw.line(surface, (30, 32, 40), (0, y), (SCREEN_WIDTH, y))
+        
+        if self.mode == 1:
+            self.tween.draw(surface)
+            pos = self.tween.get_position()
+            pygame.draw.circle(surface, (255, 200, 50),
+                             (int(pos[0]), int(pos[1])), self.tween.radius)
+            pygame.draw.circle(surface, (255, 255, 255),
+                             (int(pos[0]), int(pos[1])), self.tween.radius, 2)
+        elif self.mode == 2:
+            self.morph.draw(surface)
+        else:
+            self.ball.draw(surface)
+        
+        self.draw_hud(surface)
+
+    def run(self):
+        running = True
+        while running:
+            dt = clock.tick(self.fps) / 1000.0
+            running = self.handle_events()
+            self.update(dt)
+            self.draw(screen)
+            pygame.display.flip()
+        pygame.quit()
+        sys.exit()
+
+
+if __name__ == "__main__":
+    AnimationApp().run()
