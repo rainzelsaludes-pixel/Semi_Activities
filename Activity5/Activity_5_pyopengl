@@ -1,0 +1,208 @@
+# activity_5_pygame_pipeline.py
+# Activity 5 (Pygame version): Software 3D pipeline demonstrating
+# Z-buffer depth sorting, alpha blending, and hierarchical (articulated)
+# transforms — the same concepts as the OpenGL pipeline activity.
+
+import pygame, math, sys
+
+pygame.init()
+W, H = 900, 650
+screen = pygame.display.set_mode((W, H))
+pygame.display.set_caption("Activity 5 (Pygame): Depth Sorting, Blending & Hierarchy")
+clock = pygame.time.Clock()
+font = pygame.font.Font(None, 22)
+
+# =========================================================
+# CUBE MESH
+# =========================================================
+CUBE_V = [
+    (-1,-1,-1),(1,-1,-1),(1,1,-1),(-1,1,-1),
+    (-1,-1, 1),(1,-1, 1),(1,1, 1),(-1,1, 1)
+]
+CUBE_FACES = [
+    (0,1,2,3),  # back
+    (4,5,6,7),  # front
+    (0,1,5,4),  # bottom
+    (3,2,6,7),  # top
+    (0,3,7,4),  # left
+    (1,2,6,5),  # right
+]
+FACE_COLORS = [
+    (220, 60, 60),   # back  - red
+    (60, 220, 90),   # front - green
+    (60, 120, 230),  # bottom- blue
+    (230, 210, 60),  # top   - yellow
+    (200, 80, 200),  # left  - magenta
+    (60, 220, 220),  # right - cyan
+]
+
+# =========================================================
+# TRANSFORM HELPERS
+# =========================================================
+def rot_x(p, a):
+    x, y, z = p
+    c, s = math.cos(a), math.sin(a)
+    return (x, y*c - z*s, y*s + z*c)
+
+def rot_y(p, a):
+    x, y, z = p
+    c, s = math.cos(a), math.sin(a)
+    return (x*c + z*s, y, -x*s + z*c)
+
+def rot_z(p, a):
+    x, y, z = p
+    c, s = math.cos(a), math.sin(a)
+    return (x*c - y*s, x*s + y*c, z)
+
+def translate(p, t):
+    return (p[0] + t[0], p[1] + t[1], p[2] + t[2])
+
+def scale(p, s):
+    return (p[0]*s, p[1]*s, p[2]*s)
+
+# =========================================================
+# PROJECTION (perspective)
+# =========================================================
+FOV = 500
+CAM_Z = 7.0
+CX, CY = W // 2, H // 2
+
+def project(p):
+    """Perspective projection onto 2D viewport."""
+    x, y, z = p
+    z_cam = z + CAM_Z
+    if z_cam < 0.1: z_cam = 0.1
+    f = FOV / z_cam
+    return (int(CX + x * f), int(CY - y * f), z_cam)
+
+# =========================================================
+# BUILD A TRANSFORMED CUBE (faces + depth for sorting)
+# =========================================================
+def build_cube(translate_v=(0,0,0), scale_v=1.0,
+               rot_x_a=0, rot_y_a=0, rot_z_a=0,
+               alpha=255):
+    verts = []
+    for v in CUBE_V:
+        p = scale(v, scale_v)
+        p = rot_x(p, rot_x_a)
+        p = rot_y(p, rot_y_a)
+        p = rot_z(p, rot_z_a)
+        p = translate(p, translate_v)
+        verts.append(p)
+
+    projected = [project(v) for v in verts]
+
+    faces = []
+    for i, face in enumerate(CUBE_FACES):
+        pts2d = [(projected[idx][0], projected[idx][1]) for idx in face]
+        # Average camera-depth for painter's algorithm (z-buffer replacement)
+        avg_z = sum(projected[idx][2] for idx in face) / len(face)
+        faces.append((avg_z, pts2d, FACE_COLORS[i], alpha))
+    return faces
+
+# =========================================================
+# MAIN LOOP
+# =========================================================
+t = 0.0
+show_blend = False
+show_arm = True
+
+running = True
+while running:
+    dt = clock.tick(60) / 1000.0
+    t += dt
+
+    for e in pygame.event.get():
+        if e.type == pygame.QUIT:
+            running = False
+        if e.type == pygame.KEYDOWN:
+            if e.key == pygame.K_b: show_blend = not show_blend
+            if e.key == pygame.K_a: show_arm   = not show_arm
+
+    screen.fill((8, 10, 20))
+
+    # ---------------- Draw scene into a list of faces ----------------
+    all_faces = []
+
+    # (1) Solid rotating cube — center
+    all_faces += build_cube(
+        translate_v=(0, 0, 0),
+        scale_v=1.0,
+        rot_x_a=t * 0.6,
+        rot_y_a=t * 0.9,
+        alpha=255)
+
+    # (2) Semi-transparent cube — offset to the right
+    if show_blend:
+        all_faces += build_cube(
+            translate_v=(2.4, 0.3, -0.5),
+            scale_v=0.85,
+            rot_x_a=-t * 0.7,
+            rot_y_a=t * 1.1,
+            alpha=90)   # <-- alpha blending
+
+    # (3) Hierarchical articulated arm — left side
+    if show_arm:
+        # Upper arm: transform chain  T(-2.6,-0.8,0) * Rz(t) * scale
+        base = (0, 0, 0)
+        # Reuse build_cube but we need a more flexible chain,
+        # so build the arm manually from small cubes:
+        # Upper segment
+        angle1 = math.sin(t) * 0.8
+        all_faces += build_cube(
+            translate_v=(-2.6, -0.8 + 0.4*math.sin(t), 0),
+            scale_v=0.55,
+            rot_x_a=0, rot_y_a=0,
+            rot_z_a=angle1,
+            alpha=255)
+        # Elbow position after upper segment
+        ex = -2.6 + math.cos(angle1) * 1.1
+        ey = (-0.8 + 0.4*math.sin(t)) + math.sin(angle1) * 1.1
+        # Forearm
+        angle2 = angle1 + math.sin(t * 1.6) * 1.0
+        all_faces += build_cube(
+            translate_v=(ex, ey, 0),
+            scale_v=0.45,
+            rot_x_a=0, rot_y_a=0,
+            rot_z_a=angle2,
+            alpha=255)
+
+    # ---------------- Depth sort (painter's algorithm = software Z-buffer) ----------------
+    all_faces.sort(key=lambda f: f[0], reverse=True)  # far -> near
+
+    # ---------------- Render ----------------
+    for _, pts2d, color, alpha in all_faces:
+        if alpha >= 255:
+            pygame.draw.polygon(screen, color, pts2d)
+            pygame.draw.polygon(screen, (20, 20, 30), pts2d, 2)
+        else:
+            # Alpha-blended polygon on an SRCALPHA layer
+            xs = [p[0] for p in pts2d]
+            ys = [p[1] for p in pts2d]
+            minx, maxx = min(xs), max(xs)
+            miny, maxy = min(ys), max(ys)
+            sw, sh = maxx - minx + 2, maxy - miny + 2
+            if sw > 0 and sh > 0:
+                surf = pygame.Surface((sw, sh), pygame.SRCALPHA)
+                local = [(p[0] - minx, p[1] - miny) for p in pts2d]
+                pygame.draw.polygon(surf, (*color, alpha), local)
+                pygame.draw.polygon(surf, (240, 240, 240, 120), local, 2)
+                screen.blit(surf, (minx, miny))
+
+    # ---------------- HUD ----------------
+    screen.blit(font.render(
+        "Activity 5 (Pygame): Depth Sort + Alpha Blend + Hierarchical Transforms",
+        True, (230, 230, 240)), (15, 15))
+    screen.blit(font.render(
+        "[B] Toggle transparent cube   [A] Toggle articulated arm",
+        True, (170, 180, 200)), (15, H - 28))
+    screen.blit(font.render(
+        f"Blend: {'ON' if show_blend else 'OFF'}   "
+        f"Arm: {'ON' if show_arm else 'OFF'}   "
+        f"FPS: {int(clock.get_fps())}",
+        True, (140, 200, 255)), (15, 40))
+
+    pygame.display.flip()
+
+pygame.quit()
+sys.exit()
