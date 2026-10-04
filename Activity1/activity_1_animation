@@ -1,0 +1,119 @@
+# activity_1_2d_animation.py
+# Activity 1: Tweening, Morphing & Bouncing Dynamics
+# Special: Task 1 path = "V" shape | Task 2 morph = Triangle -> Box
+
+import pygame, math, sys
+
+pygame.init()
+W, H = 800, 600
+screen = pygame.display.set_mode((W, H))
+pygame.display.set_caption("Activity 1: Tweening | Morphing | Dynamics")
+clock = pygame.time.Clock()
+font = pygame.font.Font(None, 28)
+
+# ---------------- Helper: LERP ----------------
+def lerp(a, b, t):
+    return a + (b - a) * t
+
+def lerp_point(p1, p2, t):
+    return (lerp(p1[0], p2[0], t), lerp(p1[1], p2[1], t))
+
+# ---------------- TASK 1.1: "V" shaped path tweening ----------------
+# A "V" path: start top-left, dip to bottom-middle, rise to top-right
+V_PATH = [(100, 120), (400, 520), (700, 120)]
+SEGMENT_TIME = 1.2          # seconds per segment
+TOTAL_TIME = SEGMENT_TIME * (len(V_PATH) - 1)
+
+def tween_path(path, elapsed):
+    """Return position along a multi-point path given elapsed seconds."""
+    total = elapsed % TOTAL_TIME
+    seg = int(total // SEGMENT_TIME)
+    local_t = (total % SEGMENT_TIME) / SEGMENT_TIME
+    # ease-in-out for smoothness
+    ease = local_t * local_t * (3 - 2 * local_t)
+    return lerp_point(path[seg], path[seg + 1], ease)
+
+# ---------------- TASK 1.2: Morph Triangle -> Box ----------------
+# Triangle has 3 corners; box has 4. We split one triangle edge to add a 4th vertex.
+TRI = [(400, 120), (250, 420), (550, 420)]              # triangle (3 verts)
+# Insert a midpoint on the base edge -> 4 vertices for correspondence
+tri_verts = [TRI[0], TRI[1], ((TRI[1][0] + TRI[2][0]) / 2, (TRI[1][1] + TRI[2][1]) / 2), TRI[2]]
+box_verts = [(300, 150), (300, 450), (500, 450), (500, 150)]  # box (4 verts)
+
+def morph(verts_a, verts_b, t):
+    ease = t * t * (3 - 2 * t)   # ease-in-out
+    return [lerp_point(a, b, ease) for a, b in zip(verts_a, verts_b)]
+
+# ---------------- TASK 1.3: Bouncing Ball Dynamics ----------------
+ball_x, ball_y = 400, 80
+ball_vx, ball_vy = 220.0, 0.0
+GRAVITY = 900.0             # px / s^2
+RESTITUTION = 0.78
+FLOOR_Y = 540
+BALL_R = 18
+dt = 0.0
+
+# ---------------- Mode Control ----------------
+mode = 1   # 1=tween, 2=morph, 3=dynamics
+
+# ---------------- Main Loop ----------------
+running = True
+while running:
+    dt = clock.tick(60) / 1000.0
+    elapsed = pygame.time.get_ticks() / 1000.0
+
+    for e in pygame.event.get():
+        if e.type == pygame.QUIT:
+            running = False
+        if e.type == pygame.KEYDOWN:
+            if e.key == pygame.K_1: mode = 1
+            if e.key == pygame.K_2: mode = 2
+            if e.key == pygame.K_3: mode = 3
+
+    screen.fill((18, 18, 28))
+
+    # ----- MODE 1: Tweening along "V" path -----
+    if mode == 1:
+        pos = tween_path(V_PATH, elapsed)
+        # Draw path guide
+        pygame.draw.lines(screen, (60, 80, 110), False, V_PATH, 2)
+        for p in V_PATH:
+            pygame.draw.circle(screen, (90, 130, 180), p, 5)
+        pygame.draw.circle(screen, (255, 210, 80), (int(pos[0]), int(pos[1])), 16)
+        screen.blit(font.render("Task 1.1: LERP Tweening along a 'V' path", True, (220,220,220)), (20, 20))
+
+    # ----- MODE 2: Morph Triangle -> Box -----
+    elif mode == 2:
+        t = (elapsed * 0.5) % 1.0     # 2-second cycle
+        verts = morph(tri_verts, box_verts, t)
+        pygame.draw.polygon(screen, (90, 200, 160), verts)
+        pygame.draw.polygon(screen, (220, 240, 255), verts, 2)
+        screen.blit(font.render("Task 1.2: Triangle -> Box Morph", True, (220,220,220)), (20, 20))
+
+    # ----- MODE 3: Bouncing Ball -----
+    elif mode == 3:
+        ball_vy += GRAVITY * dt
+        ball_x += ball_vx * dt
+        ball_y += ball_vy * dt
+
+        if ball_x < BALL_R or ball_x > W - BALL_R:
+            ball_vx *= -1
+            ball_x = max(BALL_R, min(W - BALL_R, ball_x))
+        if ball_y > FLOOR_Y - BALL_R:
+            ball_y = FLOOR_Y - BALL_R
+            ball_vy = -ball_vy * RESTITUTION
+            if abs(ball_vy) < 30: ball_vy = 0
+
+        # Floor
+        pygame.draw.line(screen, (120, 120, 140), (0, FLOOR_Y), (W, FLOOR_Y), 3)
+        # Ball with trailing highlight
+        pygame.draw.circle(screen, (255, 90, 90), (int(ball_x), int(ball_y)), BALL_R)
+        pygame.draw.circle(screen, (255, 200, 200), (int(ball_x)-5, int(ball_y)-5), 4)
+        screen.blit(font.render("Task 1.3: Bouncing Ball (gravity + restitution)", True, (220,220,220)), (20, 20))
+
+    # HUD
+    screen.blit(font.render("Keys: [1] Tween  [2] Morph  [3] Dynamics", True, (180, 180, 200)), (20, H - 30))
+    pygame.display.flip()
+
+pygame.quit()
+sys.exit()
